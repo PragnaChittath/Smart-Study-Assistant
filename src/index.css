@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .perspective-1000 {
+    perspective: 1000px;
+  }
+  .transform-style-3d {
+    transform-style: preserve-3d;
+  }
+  .backface-hidden {
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+  }
+  .rotate-y-180 {
+    transform: rotateY(180deg);
+  }
+}
+
+@keyframes spinSlow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin-slow {
+  animation: spinSlow 8s linear infinite;
+}
+
+.markdown-comparison-table table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 0.875rem;
+}
+
+.markdown-comparison-table th {
+  background-color: rgba(30, 41, 59, 0.8);
+  color: #e2e8f0;
+  font-weight: 700;
+  text-align: left;
+  padding: 0.75rem 1rem;
+  border-bottom: 2px solid rgba(99, 102, 241, 0.4);
+}
+
+.markdown-comparison-table td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+  color: #cbd5e1;
+  vertical-align: top;
+}
+
+.markdown-comparison-table tr:nth-child(even) {
+  background-color: rgba(15, 23, 42, 0.4);
+}
+
+.markdown-comparison-table tr:hover {
+  background-color: rgba(99, 102, 241, 0.08);
+}
+

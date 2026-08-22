@@ -1,0 +1,6 @@
+{
+  "name": "Smart Study Assistant",
+  "description": "Upload lecture notes, PDFs, images, recorded audio, or documents to summarize key points, ask spoken voice queries, practice realistic AI oral viva & interviews, generate interactive flashcards, practice quizzes, conversational mini podcasts, interactive Mermaid.js mind maps, and multi-document comparative analysis.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
