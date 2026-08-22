@@ -1,5 +1,6 @@
  Smart Study Assistant is an all-in-one multimodal AI learning platform engineered to transform raw study material into interactive, high-retention knowledge assets. The platform accepts diverse input formats—including PDFs, handwritten notes, whiteboard photos, typed text, live voice recordings, and pre-recorded audio clips—and synthesizes them into personalized study aids.
 With cross-lingual intelligence, students can input content in one language and generate outputs in an entirely different language, bridging academic language barriers across all Indian regional languages and major global languages.
+
 Core Features:
  * Universal Multimodal Input
    * Process textbook PDFs, lecture slides, research documents, and handwritten notes.
@@ -22,6 +23,7 @@ Core Features:
  * Cross-Lingual Engine
    * Full input-to-output language decoupling: input lecture notes in one language (e.g., Hindi, Telugu, or Tamil) and generate summaries, quizzes, podcasts, or viva simulations in another (e.g., English, French, or German).
    * Comprehensive coverage across Indian regional languages and global languages.
+
 Target Audience:
  * Students & Exam Aspirants: Streamline semester prep, competitive exams, and viva voce defences.
  * Multilingual Learners: Master academic concepts taught in secondary languages through native-language explanations.
