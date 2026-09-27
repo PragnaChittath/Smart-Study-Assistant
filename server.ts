@@ -1,14 +1,15 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
-import { sanitizeUserFacingErrorMessage } from './server/aiClient';
-import { StudySetSynthesisService } from './server/services/studySetService';
-import { ComparativeMatrixService } from './server/services/comparisonService';
-import { InteractiveTutorService } from './server/services/tutorService';
-import { AdaptiveQuizService } from './server/services/quizService';
-import { AudioPodcastService } from './server/services/podcastService';
-import { ConceptDiagramService } from './server/services/mindmapService';
-import { VivaInterviewOrchestrator } from './server/services/vivaService';
+import { sanitizeUserFacingErrorMessage } from './server/aiClient.ts';
+import { StudySetSynthesisService } from './server/services/studySetService.ts';
+import { ComparativeMatrixService } from './server/services/comparisonService.ts';
+import { InteractiveTutorService } from './server/services/tutorService.ts';
+import { AdaptiveQuizService } from './server/services/quizService.ts';
+import { AudioPodcastService } from './server/services/podcastService.ts';
+import { ConceptDiagramService } from './server/services/mindmapService.ts';
+import { VivaInterviewOrchestrator } from './server/services/vivaService.ts';
 
 const app = express();
 const PORT = 3000;
@@ -17,7 +18,7 @@ app.use(express.json({ limit: '60mb' }));
 app.use(express.urlencoded({ extended: true, limit: '60mb' }));
 
 // Health Check Probe
-app.get('/api/health', (req, res) => {
+app.get('/api/health', (_req, res) => {
   res.json({
     status: 'online',
     timestamp: new Date().toISOString(),
@@ -238,8 +239,8 @@ app.post('/api/generate-mindmap', async (req, res) => {
   }
 });
 
-// Viva Interview: Generate Next Question
-app.post('/api/viva/generate-next-question', async (req, res) => {
+// Viva Interview: Generate Next Question (supports both /api/viva/next-question and /api/viva/generate-next-question)
+const handleVivaNextQuestion = async (req: express.Request, res: express.Response) => {
   try {
     const { setup, currentTurnIndex, previousTurns, sourceContext } = req.body;
     const nextQuestion = await VivaInterviewOrchestrator.generateNextQuestion({
@@ -254,16 +255,18 @@ app.post('/api/viva/generate-next-question', async (req, res) => {
       question: nextQuestion,
     });
   } catch (error: any) {
-    console.error('[API Error] /api/viva/generate-next-question:', error);
+    console.error('[API Error] /api/viva/next-question:', error);
     res.status(500).json({
       success: false,
       error: sanitizeUserFacingErrorMessage(error),
     });
   }
-});
+};
+app.post('/api/viva/next-question', handleVivaNextQuestion);
+app.post('/api/viva/generate-next-question', handleVivaNextQuestion);
 
-// Viva Interview: Candidate Speech Transcription
-app.post('/api/viva/transcribe-answer', async (req, res) => {
+// Viva Interview: Candidate Speech Transcription (supports both /api/viva/transcribe-audio and /api/viva/transcribe-answer)
+const handleVivaTranscribe = async (req: express.Request, res: express.Response) => {
   try {
     const { audioData, mimeType, languageName, languageCode } = req.body;
     if (!audioData) {
@@ -282,13 +285,15 @@ app.post('/api/viva/transcribe-answer', async (req, res) => {
       transcript: transcriptResult,
     });
   } catch (error: any) {
-    console.error('[API Error] /api/viva/transcribe-answer:', error);
+    console.error('[API Error] /api/viva/transcribe-audio:', error);
     res.status(500).json({
       success: false,
       error: sanitizeUserFacingErrorMessage(error),
     });
   }
-});
+};
+app.post('/api/viva/transcribe-audio', handleVivaTranscribe);
+app.post('/api/viva/transcribe-answer', handleVivaTranscribe);
 
 // Viva Interview: Performance Evaluation Report
 app.post('/api/viva/generate-report', async (req, res) => {
@@ -314,20 +319,30 @@ app.post('/api/viva/generate-report', async (req, res) => {
   }
 });
 
+// Explicit JSON 404 handler for unmatched API routes
+app.all('/api/*', (req, res) => {
+  res.status(404).json({
+    success: false,
+    error: `API route ${req.method} ${req.originalUrl} not found on server.`,
+  });
+});
+
 // Vite Middleware for Development / Static Hosting for Production
 async function bootstrapServer() {
-  if (process.env.NODE_ENV !== 'production') {
+  const clientDistPath = path.join(process.cwd(), 'dist');
+  const hasClientDist = fs.existsSync(path.join(clientDistPath, 'index.html'));
+
+  if (process.env.NODE_ENV === 'production' && hasClientDist) {
+    app.use(express.static(clientDistPath));
+    app.get('*', (_req, res) => {
+      res.sendFile(path.join(clientDistPath, 'index.html'));
+    });
+  } else {
     const viteInstance = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(viteInstance.middlewares);
-  } else {
-    const clientDistPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(clientDistPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(clientDistPath, 'index.html'));
-    });
   }
 
   app.listen(PORT, '0.0.0.0', () => {

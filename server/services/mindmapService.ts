@@ -1,5 +1,5 @@
 import { Type } from '@google/genai';
-import { acquireGeminiEngine, executeResilientModelCall } from '../aiClient';
+import { acquireGeminiEngine, executeResilientModelCall } from '../aiClient.ts';
 
 export const mindmapSchemaDefinition = {
   type: Type.OBJECT,

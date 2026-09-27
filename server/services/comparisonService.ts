@@ -1,4 +1,4 @@
-import { acquireGeminiEngine, executeResilientModelCall } from '../aiClient';
+import { acquireGeminiEngine, executeResilientModelCall } from '../aiClient.ts';
 
 export class ComparativeMatrixService {
   public static async executeComparison(payload: {

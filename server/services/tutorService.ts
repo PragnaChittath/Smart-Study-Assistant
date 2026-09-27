@@ -1,4 +1,4 @@
-import { acquireGeminiEngine, executeInteractionCall } from '../aiClient';
+import { acquireGeminiEngine, executeInteractionCall } from '../aiClient.ts';
 
 export interface TutorChatPayload {
   message?: string;

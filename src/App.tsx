@@ -135,6 +135,10 @@ export function App() {
     previewUrls?: string[];
     tags?: string[];
   }) => {
+    if (isLoading) {
+      return;
+    }
+
     dispatchWorkflow({ type: 'START_SYNTHESIS', payload: { initialStep: 'Analyzing and synthesizing material...' } });
 
     try {
@@ -151,18 +155,22 @@ export function App() {
         }),
       });
 
-      let result: any;
+      let result: any = null;
+      let rawResponseText = '';
       try {
-        result = await response.json();
+        rawResponseText = await response.text();
+        result = rawResponseText ? JSON.parse(rawResponseText) : null;
       } catch {
-        if (!response.ok) {
-          throw new Error(`Server returned HTTP ${response.status}: Failed to process notes.`);
-        }
-        throw new Error('Could not read server response. Please try again.');
+        // Non-JSON response
       }
 
       if (!response.ok) {
-        throw new Error(result?.error || `Failed to process lecture notes (HTTP ${response.status}).`);
+        const errorDetail =
+          result?.error ||
+          result?.message ||
+          (rawResponseText && !rawResponseText.startsWith('<!DOCTYPE') ? rawResponseText : null) ||
+          `Server returned HTTP ${response.status} (${response.statusText || 'Error processing notes'})`;
+        throw new Error(errorDetail);
       }
 
       const generated = result.data || result.studySet || (result.title && result.summary ? result : null);

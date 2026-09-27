@@ -1,4 +1,4 @@
-import { acquireGeminiEngine, executeResilientModelCall } from '../aiClient';
+import { acquireGeminiEngine, executeResilientModelCall } from '../aiClient.ts';
 
 export class VivaInterviewOrchestrator {
   public static async generateNextQuestion(payload: {
