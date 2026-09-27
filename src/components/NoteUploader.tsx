@@ -54,7 +54,7 @@ interface NoteUploaderProps {
   studyLanguageCode?: string;
 }
 
-interface SelectedFileState extends UploadedFileItem {
+export interface SelectedFileState extends UploadedFileItem {
   id: string;
   isImage: boolean;
   isAudio?: boolean;

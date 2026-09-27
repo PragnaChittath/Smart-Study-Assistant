@@ -1,16 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useReducer, useState, useEffect } from 'react';
 import { StudySet, ProcessingConfig } from './types';
 import { NoteUploader } from './components/NoteUploader';
 import { StudyDashboard } from './components/StudyDashboard';
 import { SavedSetsModal } from './components/SavedSetsModal';
 import { StudyLanguageSelector } from './components/StudyLanguageSelector';
 import { StudyLanguage, findLanguageByCode } from './data/languages';
-import {
-  GraduationCap,
-  Sparkles,
-  FolderOpen,
-  AlertCircle,
-} from 'lucide-react';
+import { GraduationCap, Sparkles, FolderOpen, AlertCircle } from 'lucide-react';
 import {
   safeLoadFromLocalStorage,
   loadSetsFromIndexedDB,
@@ -18,58 +13,62 @@ import {
   saveSetsToIndexedDB,
   createThumbnailDataUrl,
 } from './utils/storage';
+import { appWorkflowReducer, initialAppWorkflowState } from './utils/appWorkflowState';
 
 export function App() {
-  const [activeSet, setActiveSet] = useState<StudySet | null>(null);
+  const [workflowState, dispatchWorkflow] = useReducer(appWorkflowReducer, initialAppWorkflowState);
   const [savedSets, setSavedSets] = useState<StudySet[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isLibraryOpen, setIsLibraryOpen] = useState(false);
   const [isTranslatingActiveSet, setIsTranslatingActiveSet] = useState(false);
 
   const [globalStudyLanguage, setGlobalStudyLanguage] = useState<StudyLanguage>(() => {
     try {
-      const saved = localStorage.getItem('study_assistant_language_code');
-      if (saved) {
-        return findLanguageByCode(saved);
+      const persisted = localStorage.getItem('study_assistant_language_code');
+      if (persisted) {
+        return findLanguageByCode(persisted);
       }
-    } catch (e) {}
+    } catch {
+      // LocalStorage access fallback
+    }
     return findLanguageByCode('te-IN');
   });
 
+  const activeSet = workflowState.currentStudySet;
+  const isLoading = workflowState.isProcessing;
+  const error = workflowState.errorMessage;
+  const isLibraryOpen = workflowState.savedSetsModalOpen;
+
   // Load saved sets on mount (fast initial read from localStorage, full sync from IndexedDB)
   useEffect(() => {
-    // Immediate synchronous load
-    const initialSets = safeLoadFromLocalStorage();
-    if (initialSets.length > 0) {
-      setSavedSets(initialSets);
+    const cachedSets = safeLoadFromLocalStorage();
+    if (cachedSets.length > 0) {
+      setSavedSets(cachedSets);
     }
 
-    // Background full sync from IndexedDB
-    loadSetsFromIndexedDB().then((dbSets) => {
-      if (dbSets && dbSets.length > 0) {
-        setSavedSets(dbSets);
-      }
-    }).catch(() => {
-      // Ignored: safe fallback in place
-    });
+    loadSetsFromIndexedDB()
+      .then((dbSets) => {
+        if (dbSets && dbSets.length > 0) {
+          setSavedSets(dbSets);
+        }
+      })
+      .catch(() => {
+        // Safe fallback already active
+      });
   }, []);
 
-  const saveSetsToStorage = async (sets: StudySet[]) => {
-    setSavedSets(sets);
-    // Asynchronous full persistence in IndexedDB
-    saveSetsToIndexedDB(sets);
-    // Safe lightweight mirroring to localStorage
-    safeSaveToLocalStorage(sets);
+  const persistSavedSets = (updatedSets: StudySet[]) => {
+    setSavedSets(updatedSets);
+    saveSetsToIndexedDB(updatedSets);
+    safeSaveToLocalStorage(updatedSets);
   };
 
   const handleSelectLanguage = (lang: StudyLanguage) => {
     setGlobalStudyLanguage(lang);
     try {
       localStorage.setItem('study_assistant_language_code', lang.code);
-    } catch (e) {}
+    } catch {
+      // Non-fatal
+    }
 
-    // If an active study set is present, update its language metadata
     if (activeSet) {
       handleUpdateStudySet({
         ...activeSet,
@@ -104,11 +103,16 @@ export function App() {
         setGlobalStudyLanguage(targetLang);
         try {
           localStorage.setItem('study_assistant_language_code', targetLang.code);
-        } catch (e) {}
+        } catch {
+          // Ignore storage error
+        }
       }
     } catch (err: any) {
       console.error('Translation failed:', err);
-      setError(`Could not translate study set: ${err.message}`);
+      dispatchWorkflow({
+        type: 'SYNTHESIS_ERROR',
+        payload: { error: `Could not translate study set: ${err.message || 'Unknown error'}` },
+      });
     } finally {
       setIsTranslatingActiveSet(false);
     }
@@ -131,8 +135,7 @@ export function App() {
     previewUrls?: string[];
     tags?: string[];
   }) => {
-    setIsLoading(true);
-    setError(null);
+    dispatchWorkflow({ type: 'START_SYNTHESIS', payload: { initialStep: 'Analyzing and synthesizing material...' } });
 
     try {
       const response = await fetch('/api/process-notes', {
@@ -144,29 +147,39 @@ export function App() {
           files: payload.files,
           config: payload.config,
           title: payload.title,
+          studyLanguage: payload.config?.studyLanguage || globalStudyLanguage.name,
         }),
       });
 
       let result: any;
       try {
         result = await response.json();
-      } catch (parseErr) {
+      } catch {
         if (!response.ok) {
           throw new Error(`Server returned HTTP ${response.status}: Failed to process notes.`);
         }
         throw new Error('Could not read server response. Please try again.');
       }
 
-      if (!response.ok || !result.success) {
-        throw new Error(result?.error || 'Failed to process lecture notes.');
+      if (!response.ok) {
+        throw new Error(result?.error || `Failed to process lecture notes (HTTP ${response.status}).`);
       }
 
-      const generated = result.data;
-      const uploadedFiles = payload.files || (payload.file ? [{ name: 'Document', mimeType: payload.file.mimeType, data: payload.file.data }] : []);
+      const generated = result.data || result.studySet || (result.title && result.summary ? result : null);
+      if (!generated || !generated.summary) {
+        throw new Error(result?.error || 'Failed to generate study set structure.');
+      }
+
+      const uploadedFiles =
+        payload.files ||
+        (payload.file ? [{ name: 'Document', mimeType: payload.file.mimeType, data: payload.file.data }] : []);
       const fileCount = uploadedFiles.length;
       const allImages = fileCount > 0 && uploadedFiles.every((f) => f.mimeType?.startsWith('image/'));
-      const allPdfs = fileCount > 0 && uploadedFiles.every((f) => f.mimeType === 'application/pdf' || f.mimeType?.includes('pdf'));
-      const hasAudio = fileCount > 0 && uploadedFiles.some((f) => f.mimeType?.startsWith('audio/') || (f as any).isAudio);
+      const allPdfs =
+        fileCount > 0 &&
+        uploadedFiles.every((f) => f.mimeType === 'application/pdf' || f.mimeType?.includes('pdf'));
+      const hasAudio =
+        fileCount > 0 && uploadedFiles.some((f) => f.mimeType?.startsWith('audio/') || (f as any).isAudio);
 
       let calculatedSourceType: StudySet['sourceType'] = 'text';
       if (fileCount > 1) {
@@ -176,9 +189,12 @@ export function App() {
       }
 
       const sourceFilesList = uploadedFiles.map((f) => f.name).filter(Boolean);
-      const rawPreviewImagesList = payload.previewUrls || (payload.previewUrl ? [payload.previewUrl] : uploadedFiles.map((f) => f.previewUrl).filter(Boolean) as string[]);
+      const rawPreviewImagesList =
+        payload.previewUrls ||
+        (payload.previewUrl
+          ? [payload.previewUrl]
+          : (uploadedFiles.map((f) => f.previewUrl).filter(Boolean) as string[]));
 
-      // Create compressed lightweight thumbnails for safe storage and fast rendering
       const compressedPreviews = await Promise.all(
         rawPreviewImagesList.slice(0, 4).map((p) => createThumbnailDataUrl(p, 300, 300, 0.7))
       );
@@ -201,55 +217,59 @@ export function App() {
           day: 'numeric',
           year: 'numeric',
         }),
+        studyLanguage: payload.config?.studyLanguage || globalStudyLanguage.name,
+        studyLanguageCode: payload.config?.studyLanguageCode || globalStudyLanguage.code,
         summary: generated.summary,
         flashcards: generated.flashcards,
         quiz: generated.quiz,
         previewImage: compressedPreviews[0] || undefined,
         previewImages: compressedPreviews.length > 0 ? compressedPreviews : undefined,
+        rawTextSnippet: generated.rawTextSnippet || payload.text,
       };
 
       const updatedSets = [newStudySet, ...savedSets];
-      await saveSetsToStorage(updatedSets);
-      setActiveSet(newStudySet);
+      persistSavedSets(updatedSets);
+      dispatchWorkflow({ type: 'SYNTHESIS_SUCCESS', payload: { studySet: newStudySet } });
     } catch (err: any) {
       console.error('Process notes error:', err);
       const msg = err?.message || '';
-      if (msg.includes('Failed to fetch') || msg.includes('Load failed') || msg.includes('NetworkError')) {
-        setError('Network request failed. If you uploaded large files, please try uploading smaller files or try again in a moment.');
-      } else {
-        setError(msg || 'An error occurred while generating your study set. Please try again.');
-      }
-    } finally {
-      setIsLoading(false);
+      const userFacingMsg =
+        msg.includes('Failed to fetch') || msg.includes('Load failed') || msg.includes('NetworkError')
+          ? 'Network request failed. If you uploaded large files, please try uploading smaller files or try again in a moment.'
+          : msg || 'An error occurred while generating your study set. Please try again.';
+      dispatchWorkflow({ type: 'SYNTHESIS_ERROR', payload: { error: userFacingMsg } });
     }
   };
 
   const handleSelectSet = (set: StudySet) => {
-    setActiveSet(set);
-    setIsLibraryOpen(false);
+    dispatchWorkflow({ type: 'RESTORE_STUDY_SET', payload: { studySet: set } });
   };
 
   const handleDeleteSet = (id: string) => {
     const updated = savedSets.filter((s) => s.id !== id);
-    saveSetsToStorage(updated);
+    persistSavedSets(updated);
     if (activeSet?.id === id) {
-      setActiveSet(updated[0] || null);
+      if (updated[0]) {
+        dispatchWorkflow({ type: 'RESTORE_STUDY_SET', payload: { studySet: updated[0] } });
+      } else {
+        dispatchWorkflow({ type: 'CLEAR_STUDY_SET' });
+      }
     }
   };
 
   const handleUpdateStudySet = (updated: StudySet) => {
-    setActiveSet(updated);
+    dispatchWorkflow({ type: 'UPDATE_CURRENT_SET', payload: { studySet: updated } });
     const newSets = savedSets.map((s) => (s.id === updated.id ? updated : s));
-    saveSetsToStorage(newSets);
+    persistSavedSets(newSets);
   };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
-      {/* Top Navbar */}
+      {/* Top Navigation Bar */}
       <header className="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
           <div
-            onClick={() => setActiveSet(null)}
+            onClick={() => dispatchWorkflow({ type: 'CLEAR_STUDY_SET' })}
             className="flex items-center gap-3 cursor-pointer group select-none"
           >
             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/20 group-hover:scale-105 transition">
@@ -264,7 +284,7 @@ export function App() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            {/* STUDY LANGUAGE 🌐 - Placed directly beside / before SAVED SETS */}
+            {/* Study Language Selector */}
             <StudyLanguageSelector
               currentLanguageCode={activeSet?.studyLanguageCode || globalStudyLanguage.code}
               onSelectLanguage={handleSelectLanguage}
@@ -275,7 +295,7 @@ export function App() {
 
             {/* Saved Sets Library Modal Trigger */}
             <button
-              onClick={() => setIsLibraryOpen(true)}
+              onClick={() => dispatchWorkflow({ type: 'TOGGLE_SAVED_SETS_MODAL', payload: true })}
               className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 text-xs font-semibold transition cursor-pointer"
             >
               <FolderOpen className="w-4 h-4 text-indigo-400" />
@@ -289,7 +309,7 @@ export function App() {
 
             {activeSet && (
               <button
-                onClick={() => setActiveSet(null)}
+                onClick={() => dispatchWorkflow({ type: 'CLEAR_STUDY_SET' })}
                 className="hidden sm:flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md shadow-indigo-600/20 transition cursor-pointer"
               >
                 <Sparkles className="w-3.5 h-3.5" />
@@ -300,7 +320,7 @@ export function App() {
         </div>
       </header>
 
-      {/* Main Content Area */}
+      {/* Main Workspace Frame */}
       <main className="flex-1">
         {/* Global Error Banner */}
         {error && (
@@ -308,11 +328,11 @@ export function App() {
             <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 flex items-start gap-3 text-xs sm:text-sm">
               <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
               <div className="flex-1">
-                <p className="font-semibold text-rose-200">Unable to generate study set</p>
+                <p className="font-semibold text-rose-200">Notice</p>
                 <p className="text-rose-300/90 mt-0.5">{error}</p>
               </div>
               <button
-                onClick={() => setError(null)}
+                onClick={() => dispatchWorkflow({ type: 'DISMISS_ERROR' })}
                 className="text-rose-400 hover:text-rose-200 font-bold px-2 py-1 cursor-pointer"
               >
                 ✕
@@ -321,7 +341,7 @@ export function App() {
           </div>
         )}
 
-        {/* Dynamic View: Uploader vs Dashboard */}
+        {/* Dynamic View: Uploader vs Workspace Dashboard */}
         {!activeSet ? (
           <NoteUploader
             onProcess={handleProcessNotes}
@@ -333,7 +353,7 @@ export function App() {
         ) : (
           <StudyDashboard
             studySet={activeSet}
-            onNewMaterial={() => setActiveSet(null)}
+            onNewMaterial={() => dispatchWorkflow({ type: 'CLEAR_STUDY_SET' })}
             onUpdateStudySet={handleUpdateStudySet}
           />
         )}
@@ -342,7 +362,7 @@ export function App() {
       {/* Saved Sets Library Modal */}
       <SavedSetsModal
         isOpen={isLibraryOpen}
-        onClose={() => setIsLibraryOpen(false)}
+        onClose={() => dispatchWorkflow({ type: 'TOGGLE_SAVED_SETS_MODAL', payload: false })}
         savedSets={savedSets}
         activeSetId={activeSet?.id}
         onSelectSet={handleSelectSet}

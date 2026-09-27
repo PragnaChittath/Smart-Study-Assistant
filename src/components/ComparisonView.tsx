@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   GitCompare,
   CheckCircle2,
@@ -10,18 +10,12 @@ import {
   Check,
   RefreshCw,
   FileText,
-  Image as ImageIcon,
-  ArrowRight,
-  Info,
-  Maximize2,
   Sliders,
-  BookOpen,
-  Share2,
-  Flame,
-  HelpCircle,
+  Info,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { ComparisonData, StudySet } from '../types';
+import { StudySet } from '../types';
+import { useComparisonWorkflow } from '../utils/comparisonEngine';
 
 interface ComparisonViewProps {
   studySet: StudySet;
@@ -29,62 +23,21 @@ interface ComparisonViewProps {
 }
 
 export const ComparisonView: React.FC<ComparisonViewProps> = ({ studySet, onUpdateStudySet }) => {
-  const [copied, setCopied] = useState<string | null>(null);
-  const [activeViewMode, setActiveViewMode] = useState<'all' | 'table' | 'contradictions' | 'dimensions'>('all');
-  const [isRegenerating, setIsRegenerating] = useState(false);
-  const [customFocus, setCustomFocus] = useState('');
-  const [showFocusModal, setShowFocusModal] = useState(false);
-  const [selectedContradictionIndex, setSelectedContradictionIndex] = useState<number | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const { state, dispatch, copyToClipboard, triggerComparisonSynthesis } = useComparisonWorkflow(
+    studySet,
+    onUpdateStudySet
+  );
+
+  const {
+    copiedSection,
+    displayMode,
+    isProcessing,
+    lensPrompt,
+    focusModalOpen,
+    statusError,
+  } = state;
 
   const comparison = studySet.comparison;
-
-  const handleCopy = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(label);
-    setTimeout(() => setCopied(null), 2500);
-  };
-
-  const handleGenerateOrRefreshComparison = async (focusText?: string) => {
-    setIsRegenerating(true);
-    setErrorMessage(null);
-    try {
-      const response = await fetch('/api/compare-documents', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          studyContext: {
-            title: studySet.title,
-            sourceFiles: studySet.sourceFiles || [studySet.sourceName],
-            summary: studySet.summary,
-            rawTextSnippet: studySet.rawTextSnippet,
-          },
-          focus: focusText || customFocus || undefined,
-        }),
-      });
-
-      const result = await response.json();
-      if (result.success && result.comparison) {
-        const updatedSet: StudySet = {
-          ...studySet,
-          comparison: result.comparison,
-        };
-        if (onUpdateStudySet) {
-          onUpdateStudySet(updatedSet);
-        }
-        setShowFocusModal(false);
-      } else {
-        setErrorMessage(result.error || 'Failed to generate comparative analysis.');
-        setTimeout(() => setErrorMessage(null), 6000);
-      }
-    } catch (err: any) {
-      console.error('Error generating comparison:', err);
-      setErrorMessage('Failed to connect to comparison service. Please check your network or try again.');
-      setTimeout(() => setErrorMessage(null), 6000);
-    } finally {
-      setIsRegenerating(false);
-    }
-  };
 
   if (!comparison) {
     return (
@@ -104,7 +57,10 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({ studySet, onUpda
             </h4>
             <div className="space-y-2">
               {studySet.sourceFiles.map((file, idx) => (
-                <div key={idx} className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-slate-950/70 border border-slate-800/80 text-xs text-slate-200">
+                <div
+                  key={idx}
+                  className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-slate-950/70 border border-slate-800/80 text-xs text-slate-200"
+                >
                   <FileText className="w-4 h-4 text-indigo-400 shrink-0" />
                   <span className="truncate font-medium">{file}</span>
                 </div>
@@ -113,21 +69,24 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({ studySet, onUpda
           </div>
         ) : null}
 
-        {errorMessage && (
+        {statusError && (
           <div className="p-3.5 max-w-lg mx-auto mb-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-semibold flex items-center justify-between">
-            <span>{errorMessage}</span>
-            <button onClick={() => setErrorMessage(null)} className="text-rose-400 hover:text-rose-200 ml-2 font-bold cursor-pointer">
+            <span>{statusError}</span>
+            <button
+              onClick={() => dispatch({ type: 'CLEAR_ERROR' })}
+              className="text-rose-400 hover:text-rose-200 ml-2 font-bold cursor-pointer"
+            >
               ✕
             </button>
           </div>
         )}
 
         <button
-          onClick={() => handleGenerateOrRefreshComparison()}
-          disabled={isRegenerating}
+          onClick={() => triggerComparisonSynthesis()}
+          disabled={isProcessing}
           className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white font-semibold text-sm shadow-lg shadow-indigo-500/25 transition cursor-pointer disabled:opacity-50"
         >
-          {isRegenerating ? (
+          {isProcessing ? (
             <>
               <RefreshCw className="w-4 h-4 animate-spin" />
               <span>Analyzing & Synthesizing Documents...</span>
@@ -175,15 +134,19 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({ studySet, onUpda
           {/* Action Toolbar */}
           <div className="flex items-center gap-2.5 flex-wrap shrink-0">
             <button
-              onClick={() => handleCopy(comparison.markdownTable, 'table')}
+              onClick={() => copyToClipboard(comparison.markdownTable, 'table')}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-medium transition cursor-pointer"
             >
-              {copied === 'table' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />}
-              <span>{copied === 'table' ? 'Table Copied!' : 'Copy Table'}</span>
+              {copiedSection === 'table' ? (
+                <Check className="w-3.5 h-3.5 text-emerald-400" />
+              ) : (
+                <Copy className="w-3.5 h-3.5 text-slate-400" />
+              )}
+              <span>{copiedSection === 'table' ? 'Table Copied!' : 'Copy Table'}</span>
             </button>
 
             <button
-              onClick={() => setShowFocusModal(true)}
+              onClick={() => dispatch({ type: 'TOGGLE_FOCUS_MODAL', payload: true })}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-medium transition cursor-pointer"
             >
               <Sliders className="w-3.5 h-3.5 text-indigo-400" />
@@ -191,12 +154,12 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({ studySet, onUpda
             </button>
 
             <button
-              onClick={() => handleGenerateOrRefreshComparison()}
-              disabled={isRegenerating}
+              onClick={() => triggerComparisonSynthesis()}
+              disabled={isProcessing}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md transition cursor-pointer disabled:opacity-50"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isRegenerating ? 'animate-spin' : ''}`} />
-              <span>{isRegenerating ? 'Re-analyzing...' : 'Refresh Analysis'}</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${isProcessing ? 'animate-spin' : ''}`} />
+              <span>{isProcessing ? 'Re-analyzing...' : 'Refresh Analysis'}</span>
             </button>
           </div>
         </div>
@@ -204,9 +167,9 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({ studySet, onUpda
         {/* View Mode Switcher */}
         <div className="flex items-center gap-1.5 mt-6 border-t border-slate-800/80 pt-4 overflow-x-auto no-scrollbar">
           <button
-            onClick={() => setActiveViewMode('all')}
+            onClick={() => dispatch({ type: 'SET_DISPLAY_MODE', payload: 'all' })}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition whitespace-nowrap cursor-pointer ${
-              activeViewMode === 'all'
+              displayMode === 'all'
                 ? 'bg-indigo-600 text-white shadow-sm'
                 : 'bg-slate-800/60 text-slate-400 hover:text-slate-200 hover:bg-slate-800'
             }`}
@@ -214,9 +177,9 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({ studySet, onUpda
             Full Comparison View
           </button>
           <button
-            onClick={() => setActiveViewMode('table')}
+            onClick={() => dispatch({ type: 'SET_DISPLAY_MODE', payload: 'table' })}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
-              activeViewMode === 'table'
+              displayMode === 'table'
                 ? 'bg-indigo-600 text-white shadow-sm'
                 : 'bg-slate-800/60 text-slate-400 hover:text-slate-200 hover:bg-slate-800'
             }`}
@@ -225,9 +188,9 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({ studySet, onUpda
             Comparison Table
           </button>
           <button
-            onClick={() => setActiveViewMode('contradictions')}
+            onClick={() => dispatch({ type: 'SET_DISPLAY_MODE', payload: 'contradictions' })}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
-              activeViewMode === 'contradictions'
+              displayMode === 'contradictions'
                 ? 'bg-rose-600 text-white shadow-sm'
                 : 'bg-slate-800/60 text-slate-400 hover:text-rose-300 hover:bg-slate-800'
             }`}
@@ -238,17 +201,20 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({ studySet, onUpda
         </div>
       </div>
 
-      {errorMessage && (
+      {statusError && (
         <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-semibold flex items-center justify-between animate-in fade-in">
-          <span>{errorMessage}</span>
-          <button onClick={() => setErrorMessage(null)} className="text-rose-400 hover:text-rose-200 ml-2 font-bold cursor-pointer">
+          <span>{statusError}</span>
+          <button
+            onClick={() => dispatch({ type: 'CLEAR_ERROR' })}
+            className="text-rose-400 hover:text-rose-200 ml-2 font-bold cursor-pointer"
+          >
             ✕
           </button>
         </div>
       )}
 
       {/* Focus Refinement Modal */}
-      {showFocusModal && (
+      {focusModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between">
@@ -257,7 +223,7 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({ studySet, onUpda
                 Refine Comparative Analysis Focus
               </h3>
               <button
-                onClick={() => setShowFocusModal(false)}
+                onClick={() => dispatch({ type: 'TOGGLE_FOCUS_MODAL', payload: false })}
                 className="text-slate-400 hover:text-slate-200 text-xs px-2 py-1 rounded-lg bg-slate-800 cursor-pointer"
               >
                 ✕
@@ -269,8 +235,8 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({ studySet, onUpda
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-slate-300">Custom Focus Prompt / Lens</label>
               <textarea
-                value={customFocus}
-                onChange={(e) => setCustomFocus(e.target.value)}
+                value={lensPrompt}
+                onChange={(e) => dispatch({ type: 'SET_LENS_PROMPT', payload: e.target.value })}
                 placeholder="e.g., Focus on conflicting definitions of entropy and differing experimental setups between Chapter 3 and Lecture 4..."
                 rows={3}
                 className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -278,17 +244,17 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({ studySet, onUpda
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <button
-                onClick={() => setShowFocusModal(false)}
+                onClick={() => dispatch({ type: 'TOGGLE_FOCUS_MODAL', payload: false })}
                 className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium cursor-pointer"
               >
                 Cancel
               </button>
               <button
-                onClick={() => handleGenerateOrRefreshComparison(customFocus)}
-                disabled={isRegenerating}
+                onClick={() => triggerComparisonSynthesis(lensPrompt)}
+                disabled={isProcessing}
                 className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md cursor-pointer disabled:opacity-50"
               >
-                {isRegenerating ? 'Analyzing...' : 'Generate Refined Comparison'}
+                {isProcessing ? 'Analyzing...' : 'Generate Refined Comparison'}
               </button>
             </div>
           </div>
@@ -296,7 +262,7 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({ studySet, onUpda
       )}
 
       {/* Executive Overview */}
-      {(activeViewMode === 'all' || activeViewMode === 'table') && (
+      {(displayMode === 'all' || displayMode === 'table') && (
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-sm">
           <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-400 mb-2 flex items-center gap-2">
             <Info className="w-4 h-4" /> Executive Comparative Overview
@@ -308,7 +274,7 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({ studySet, onUpda
       )}
 
       {/* Side-by-Side Key Similarities & Distinct Differences (Grid) */}
-      {activeViewMode === 'all' && (
+      {displayMode === 'all' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Key Similarities */}
           <div className="bg-slate-900 border border-emerald-500/20 rounded-2xl p-6 shadow-sm flex flex-col justify-between">
@@ -359,7 +325,7 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({ studySet, onUpda
       )}
 
       {/* Contradicting Statements & Discrepancies Alert Section */}
-      {(activeViewMode === 'all' || activeViewMode === 'contradictions') && (
+      {(displayMode === 'all' || displayMode === 'contradictions') && (
         <div className="bg-slate-900 border border-rose-500/30 rounded-2xl p-6 shadow-sm space-y-4">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2.5">
@@ -433,7 +399,7 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({ studySet, onUpda
       )}
 
       {/* Structured Markdown Comparison Table */}
-      {(activeViewMode === 'all' || activeViewMode === 'table') && (
+      {(displayMode === 'all' || displayMode === 'table') && (
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-2">
@@ -444,11 +410,15 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({ studySet, onUpda
               </div>
             </div>
             <button
-              onClick={() => handleCopy(comparison.markdownTable, 'markdown-table')}
+              onClick={() => copyToClipboard(comparison.markdownTable, 'markdown-table')}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-medium transition cursor-pointer"
             >
-              {copied === 'markdown-table' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copied === 'markdown-table' ? 'Copied Markdown!' : 'Copy Markdown'}</span>
+              {copiedSection === 'markdown-table' ? (
+                <Check className="w-3.5 h-3.5 text-emerald-400" />
+              ) : (
+                <Copy className="w-3.5 h-3.5" />
+              )}
+              <span>{copiedSection === 'markdown-table' ? 'Copied Markdown!' : 'Copy Markdown'}</span>
             </button>
           </div>
 
@@ -461,7 +431,7 @@ export const ComparisonView: React.FC<ComparisonViewProps> = ({ studySet, onUpda
       )}
 
       {/* Consolidated Synthesized Takeaway */}
-      {activeViewMode === 'all' && (
+      {displayMode === 'all' && (
         <div className="bg-gradient-to-br from-indigo-950/40 via-slate-900 to-cyan-950/30 border border-indigo-500/30 rounded-2xl p-6 shadow-md space-y-3">
           <div className="flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-cyan-400" />
